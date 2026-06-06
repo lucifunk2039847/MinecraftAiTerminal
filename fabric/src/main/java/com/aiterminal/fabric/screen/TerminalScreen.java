@@ -282,8 +282,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalScreenHandle
                 return true;
             }
         }
+        // While the input box is focused, swallow every key except Escape so game keybinds
+        // (inventory 'e', hotbar numbers, movement, etc.) can't fire or close the screen.
+        // Printable characters are still inserted via charTyped(), which runs independently.
         if (input != null && input.isFocused() && keyCode != GLFW.GLFW_KEY_ESCAPE) {
-            return input.keyPressed(keyCode, scanCode, modifiers) || super.keyPressed(keyCode, scanCode, modifiers);
+            input.keyPressed(keyCode, scanCode, modifiers);
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
