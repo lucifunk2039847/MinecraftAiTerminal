@@ -1,0 +1,10 @@
+// Pure Java module — zero Minecraft / loader imports.
+// Compiled classes are bundled into each platform jar (see each module's build.gradle).
+plugins {
+    id 'java'
+}
+
+// No external dependencies on purpose: JSON is handled by a tiny self-contained
+// parser (MiniJson) so nothing extra needs to be shaded into the mod jars.
+dependencies {
+}

@@ -1,0 +1,48 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '6.0.53'
+}
+
+base {
+    archivesName = "${rootProject.mod_id}-forge"
+}
+
+// Compile the pure-Java common sources directly into this module (part of the mod's own
+// classpath in dev, and reobfuscated/bundled into the jar in production).
+sourceSets {
+    main {
+        java {
+            srcDir rootProject.file('common/src/main/java')
+        }
+    }
+}
+
+minecraft {
+    // Develop against official Mojang mappings (same vanilla API names as the other modules).
+    mappings channel: 'official', version: rootProject.mc_version
+
+    // No access transformers / no custom runs required to build the jar.
+    copyIdeResources = true
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${rootProject.forge_version}"
+}
+
+// ForgeGradle reobfuscates the 'jar' task output to the production mapping.
+reobf {
+    jar {}
+}
+
+processResources {
+    def tokens = [
+            mod_version  : rootProject.mod_version,
+            mod_id       : rootProject.mod_id,
+            mod_name     : rootProject.mod_name,
+            mc_version   : rootProject.mc_version,
+            forge_version: rootProject.forge_version
+    ]
+    inputs.properties(tokens)
+    filesMatching('META-INF/mods.toml') {
+        expand(tokens)
+    }
+}

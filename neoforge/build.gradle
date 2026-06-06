@@ -1,0 +1,51 @@
+plugins {
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+// Compile the pure-Java common sources directly into this module so they are part of the mod's
+// own module/classpath — visible to FML at dev runtime and bundled into the jar in production.
+sourceSets {
+    main {
+        java {
+            srcDir rootProject.file('common/src/main/java')
+        }
+    }
+}
+
+neoForge {
+    version = rootProject.neoforge_version
+
+    // A dev client/server run config (optional — only used by ./gradlew :neoforge:runClient).
+    runs {
+        client {
+            client()
+        }
+        server {
+            server()
+        }
+    }
+
+    mods {
+        aiterminal {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+processResources {
+    def tokens = [
+            mod_version       : rootProject.mod_version,
+            mod_id            : rootProject.mod_id,
+            mod_name          : rootProject.mod_name,
+            mc_version        : rootProject.mc_version,
+            neoforge_version  : rootProject.neoforge_version
+    ]
+    inputs.properties(tokens)
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(tokens)
+    }
+}
+
+base {
+    archivesName = "${rootProject.mod_id}-neoforge"
+}

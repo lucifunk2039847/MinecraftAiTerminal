@@ -1,0 +1,38 @@
+plugins {
+    id 'fabric-loom' version '1.13.4'
+}
+
+base {
+    archivesName = "${rootProject.mod_id}-fabric"
+}
+
+// Compile the pure-Java common sources directly into this module (part of the mod's own
+// classpath in dev, and bundled into the remapped jar in production).
+sourceSets {
+    main {
+        java {
+            srcDir rootProject.file('common/src/main/java')
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${rootProject.mc_version}"
+    // Official Mojang mappings (matches the vanilla API names used across the modules).
+    mappings loom.officialMojangMappings()
+
+    modImplementation "net.fabricmc:fabric-loader:${rootProject.fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
+}
+
+processResources {
+    def tokens = [
+            version : rootProject.mod_version,
+            mod_id  : rootProject.mod_id,
+            mod_name: rootProject.mod_name
+    ]
+    inputs.properties(tokens)
+    filesMatching('fabric.mod.json') {
+        expand(tokens)
+    }
+}
