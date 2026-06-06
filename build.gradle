@@ -1,0 +1,33 @@
+// Root build — shared configuration for all modules.
+// Each platform module (fabric/forge/neoforge) applies its own loader toolchain
+// plugin in its own build.gradle. This root only supplies shared conventions.
+
+subprojects {
+    group = rootProject.mod_group
+    version = rootProject.mod_version
+
+    repositories {
+        mavenCentral()
+    }
+
+    // Apply shared Java settings only once the java plugin is present in a module.
+    // (fabric-loom and net.neoforged.moddev both pull in the java plugin themselves.)
+    plugins.withType(JavaPlugin).configureEach {
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(rootProject.java_version.toInteger())
+            }
+        }
+        tasks.withType(JavaCompile).configureEach {
+            options.encoding = 'UTF-8'
+            options.release = rootProject.java_version.toInteger()
+        }
+    }
+}
+
+// Build every platform jar in one shot.
+tasks.register('buildAll') {
+    group = 'build'
+    description = 'Builds the Fabric, Forge and NeoForge jars.'
+    dependsOn ':fabric:build', ':forge:build', ':neoforge:build'
+}

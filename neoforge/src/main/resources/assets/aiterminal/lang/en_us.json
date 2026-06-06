@@ -1,0 +1,12 @@
+{
+  "block.aiterminal.terminal": "AI Terminal",
+  "item.aiterminal.terminal": "AI Terminal",
+  "itemGroup.aiterminal.terminal_tab": "AI Terminal",
+  "gui.aiterminal.title": "AI TERMINAL",
+  "gui.aiterminal.ask": "Ask",
+  "gui.aiterminal.clear": "Clear",
+  "gui.aiterminal.input_hint": "Type a question and press Enter...",
+  "gui.aiterminal.querying": "Querying",
+  "gui.aiterminal.welcome": "AI Terminal ready. Ask me anything about Minecraft.",
+  "gui.aiterminal.no_model": "No model configured. Set openwebui_model in config/aiterminal.json."
+}
