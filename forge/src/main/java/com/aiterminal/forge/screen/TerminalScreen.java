@@ -1,5 +1,6 @@
 package com.aiterminal.forge.screen;
 
+import com.aiterminal.common.api.OpenWebUIClient;
 import com.aiterminal.common.config.AITerminalConfig;
 import com.aiterminal.common.terminal.TerminalLine;
 import com.aiterminal.forge.AITerminalForge;
@@ -16,10 +17,13 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Retro green-on-black terminal screen (Forge). Scrollable output on top, single-line input with
- * Ask/Clear at the bottom. Queries run asynchronously; results are applied back on the client thread.
+ * Ask/Clear at the bottom. The answer is <b>streamed</b> token-by-token (no read timeout); each
+ * fragment is applied on the client thread so text appears live. Closing the screen cancels any
+ * in-flight request.
  */
 public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
@@ -33,6 +37,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private EditBox input;
     private int scrollRow;
     private boolean followTail = true;
+    private CompletableFuture<Void> activeRequest;
+    private volatile boolean requestCancelled;
 
     public TerminalScreen(TerminalMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -74,7 +80,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
     private void submit() {
         TerminalBlockEntity be = menu.getBlockEntity();
-        if (be == null || be.isLoading()) {
+        if (be == null || be.isLoading() || be.isStreaming()) {
             return;
         }
         String question = input.getValue().trim();
@@ -92,21 +98,60 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
         be.addUserLine(question);
         be.setLoading(true);
+        be.beginResponse();
         input.setValue("");
         followTail = true;
+        requestCancelled = false;
 
-        AITerminalForge.client().ask(question).whenComplete((response, throwable) -> {
-            Minecraft.getInstance().execute(() -> {
-                be.setLoading(false);
-                followTail = true;
-                if (throwable != null) {
-                    be.addError("Request failed: " + throwable.getMessage());
-                } else if (response.success()) {
-                    be.addResponse(truncate(response.content(), config.getMaxResponseLength()));
-                } else {
-                    be.addError(response.errorMessage());
-                }
-            });
+        final int max = config.getMaxResponseLength();
+        final int[] streamed = {0};
+        final boolean[] truncated = {false};
+
+        activeRequest = AITerminalForge.client().askStreaming(question, new OpenWebUIClient.StreamListener() {
+            @Override
+            public void onToken(String text) {
+                Minecraft.getInstance().execute(() -> {
+                    if (requestCancelled || truncated[0]) {
+                        return;
+                    }
+                    String add = text;
+                    if (max > 0 && streamed[0] + add.length() > max) {
+                        add = add.substring(0, Math.max(0, max - streamed[0]));
+                        be.appendResponse(add);
+                        be.appendResponse("\n[...truncated]");
+                        truncated[0] = true;
+                    } else {
+                        be.appendResponse(add);
+                        streamed[0] += add.length();
+                    }
+                    followTail = true;
+                });
+            }
+
+            @Override
+            public void onComplete() {
+                Minecraft.getInstance().execute(() -> {
+                    if (requestCancelled) {
+                        return;
+                    }
+                    be.endResponse();
+                    be.setLoading(false);
+                    followTail = true;
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                Minecraft.getInstance().execute(() -> {
+                    if (requestCancelled) {
+                        return;
+                    }
+                    be.endResponse();
+                    be.addError(message);
+                    be.setLoading(false);
+                    followTail = true;
+                });
+            }
         });
     }
 
@@ -119,14 +164,18 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         }
     }
 
-    private static String truncate(String text, int max) {
-        if (text == null) {
-            return "";
+    @Override
+    public void removed() {
+        requestCancelled = true;
+        if (activeRequest != null) {
+            activeRequest.cancel(true);
         }
-        if (max > 0 && text.length() > max) {
-            return text.substring(0, max) + "\n[...truncated]";
+        TerminalBlockEntity be = menu.getBlockEntity();
+        if (be != null) {
+            be.endResponse();
+            be.setLoading(false);
         }
-        return text;
+        super.removed();
     }
 
     // ---- Rendering -------------------------------------------------------
@@ -179,27 +228,39 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         if (be != null) {
             for (String encoded : be.getOutputHistory()) {
                 int color = colorFor(TerminalLine.kindOf(encoded));
-                String text = TerminalLine.textOf(encoded);
-                for (String paragraph : text.split("\n", -1)) {
-                    List<FormattedCharSequence> wrapped =
-                            this.font.split(Component.literal(paragraph), innerWidth);
-                    if (wrapped.isEmpty()) {
-                        out.add(new RenderLine(FormattedCharSequence.EMPTY, color));
-                    } else {
-                        for (FormattedCharSequence seq : wrapped) {
-                            out.add(new RenderLine(seq, color));
-                        }
-                    }
-                }
+                wrapInto(out, TerminalLine.textOf(encoded), color, innerWidth);
             }
-            if (be.isLoading()) {
-                int dots = (int) ((System.currentTimeMillis() / 400) % 4);
-                String querying = Component.translatable("gui.aiterminal.querying").getString()
-                        + ".".repeat(dots);
-                out.add(new RenderLine(Component.literal(querying).getVisualOrderText(), COLOR_INFO));
+            if (be.isStreaming()) {
+                String live = be.getStreamingText();
+                if (live.isEmpty()) {
+                    out.add(new RenderLine(queryingSequence(), COLOR_INFO));
+                } else {
+                    wrapInto(out, live, COLOR_RESPONSE, innerWidth);
+                }
+            } else if (be.isLoading()) {
+                out.add(new RenderLine(queryingSequence(), COLOR_INFO));
             }
         }
         return out;
+    }
+
+    private void wrapInto(List<RenderLine> out, String text, int color, int innerWidth) {
+        for (String paragraph : text.split("\n", -1)) {
+            List<FormattedCharSequence> wrapped = this.font.split(Component.literal(paragraph), innerWidth);
+            if (wrapped.isEmpty()) {
+                out.add(new RenderLine(FormattedCharSequence.EMPTY, color));
+            } else {
+                for (FormattedCharSequence seq : wrapped) {
+                    out.add(new RenderLine(seq, color));
+                }
+            }
+        }
+    }
+
+    private FormattedCharSequence queryingSequence() {
+        int dots = (int) ((System.currentTimeMillis() / 400) % 4);
+        String querying = Component.translatable("gui.aiterminal.querying").getString() + ".".repeat(dots);
+        return Component.literal(querying).getVisualOrderText();
     }
 
     private static int colorFor(TerminalLine.Kind kind) {
