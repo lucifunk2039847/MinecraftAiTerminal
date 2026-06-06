@@ -28,6 +28,8 @@ public class TerminalBlockEntity extends BlockEntity implements ExtendedScreenHa
 
     private final List<String> outputHistory = new ArrayList<>();
     private boolean isLoading;
+    private boolean streaming;
+    private final StringBuilder streamingResponse = new StringBuilder();
 
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModRegistry.TERMINAL_BE, pos, state);
@@ -63,6 +65,42 @@ public class TerminalBlockEntity extends BlockEntity implements ExtendedScreenHa
 
     public void clearHistory() {
         outputHistory.clear();
+        streaming = false;
+        streamingResponse.setLength(0);
+    }
+
+    // ---- Streaming response ---------------------------------------------
+
+    public boolean isStreaming() {
+        return streaming;
+    }
+
+    public String getStreamingText() {
+        return streamingResponse.toString();
+    }
+
+    /** Begin a new streamed assistant response (the live buffer the screen renders). */
+    public void beginResponse() {
+        streaming = true;
+        streamingResponse.setLength(0);
+    }
+
+    /** Append a streamed fragment to the live buffer. */
+    public void appendResponse(String fragment) {
+        if (streaming && fragment != null) {
+            streamingResponse.append(fragment);
+        }
+    }
+
+    /** Commit the live buffer as a history entry and stop streaming. */
+    public void endResponse() {
+        if (streaming) {
+            streaming = false;
+            if (streamingResponse.length() > 0) {
+                add(TerminalLine.encode(TerminalLine.Kind.RESPONSE, streamingResponse.toString()));
+            }
+            streamingResponse.setLength(0);
+        }
     }
 
     private void add(String encoded) {

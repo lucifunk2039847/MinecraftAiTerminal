@@ -87,11 +87,13 @@ Content-Type: application/json
     { "role": "user",   "content": "{your question}" }
   ],
   "features": { "web_search": true },
-  "stream": false
+  "stream": true
 }
 ```
 
-The answer is read from `choices[0].message.content`. Requests time out after **30 seconds**.
+The reply is streamed back as Server-Sent Events; the mod reads each chunk's
+`choices[0].delta.content` and appends it live. There is a short **connect** timeout but **no
+read timeout**, so generation can take as long as it needs.
 
 ---
 
@@ -101,10 +103,11 @@ The answer is read from `choices[0].message.content`. Requests time out after **
    - **Fabric:** install Fabric Loader **and** the [Fabric API](https://modrinth.com/mod/fabric-api) mod.
    - **Forge:** install Forge **52.x** for 1.21.1.
    - **NeoForge:** install NeoForge **21.1.x**.
-2. Copy the jar for your loader into the game's `mods/` folder:
-   - `aiterminal-fabric-1.0.0.jar`
-   - `aiterminal-forge-1.0.0.jar`
-   - `aiterminal-neoforge-1.0.0.jar`
+2. Copy the jar for your loader into the game's `mods/` folder (prebuilt jars are in
+   [`release/0.2/`](release/0.2)):
+   - `aiterminal-fabric-1.0.1.jar`
+   - `aiterminal-forge-1.0.1.jar`
+   - `aiterminal-neoforge-1.0.1.jar`
 3. Launch the game once to generate `config/aiterminal.json`, then configure it (below) and
    restart.
 
@@ -137,9 +140,11 @@ Output jars:
 
 | Platform | Path |
 |----------|------|
-| Fabric   | `fabric/build/libs/aiterminal-fabric-1.0.0.jar`     |
-| Forge    | `forge/build/libs/aiterminal-forge-1.0.0.jar`       |
-| NeoForge | `neoforge/build/libs/aiterminal-neoforge-1.0.0.jar` |
+| Fabric   | `fabric/build/libs/aiterminal-fabric-1.0.1.jar`     |
+| Forge    | `forge/build/libs/aiterminal-forge-1.0.1.jar`       |
+| NeoForge | `neoforge/build/libs/aiterminal-neoforge-1.0.1.jar` |
+
+(Prebuilt copies are committed under [`release/0.2/`](release/0.2).)
 
 ---
 
@@ -204,10 +209,15 @@ It is also available in its own **AI Terminal** creative tab.
 
 - Type a question in the input box at the bottom.
 - Press **Enter** or click **Ask** to send it.
-- While waiting, a blinking `Querying...` indicator is shown.
+- A blinking `Querying...` indicator shows until the first token arrives, then the answer
+  **streams in live**, word by word.
 - The answer appears in the scrollable output area (green = AI, white = your input,
   yellow = errors). **Scroll** with the mouse wheel.
 - Click **Clear** to reset the conversation history.
+- **Closing the screen (Esc) cancels** an in-progress request.
+
+Responses are **streamed** (Server-Sent Events) with **no read timeout**, so slow models or web
+search can take as long as they need without timing out — you'll see tokens as they're generated.
 
 History holds the last 50 entries per terminal and is **not saved** — it resets when the world
 reloads. Each request is independent (the AI does not see prior turns); the history is for your
@@ -226,9 +236,9 @@ All failures are shown as a readable yellow message in the terminal (never a cra
 | `Unauthorized (401)...` | `openwebui_api_key` is missing or invalid. |
 | `Forbidden (403)...` | The key isn't allowed to use that model. |
 | `Not found (404)...` | Wrong base URL, or the model/endpoint doesn't exist. |
+| `Unprocessable (422)...` | OpenWebUI rejected the request body. Usually the **model ID isn't exact** — copy it verbatim from Admin → Settings → Models. If only this errors with web search on, try `web_search_enabled: false`. |
 | `Rate limited (429)...` | Too many requests — wait and retry. |
-| `Request timed out after 30 seconds...` | The model is slow/unloaded, or the server is overloaded. |
-| `Malformed JSON from OpenWebUI...` | The server returned something unexpected — check the OpenWebUI logs. |
+| `Could not connect to OpenWebUI (connection timed out)...` | The server is unreachable. Responses themselves have **no** time limit (streamed), so this only fires when the initial connection can't be made. |
 
 Config warnings (missing/mistyped fields) are written to the game log at startup.
 

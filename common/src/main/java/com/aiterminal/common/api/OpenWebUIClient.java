@@ -6,25 +6,42 @@ import com.aiterminal.common.json.MiniJson;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Handles all HTTP communication with an OpenWebUI instance.
  *
- * <p>Uses the built-in {@link HttpClient} (no third-party HTTP libraries). Every call is
- * asynchronous ({@link CompletableFuture}) so the game thread is never blocked. All failure
- * modes are translated into a {@link ChatResponse} carrying a human-readable message instead
- * of throwing.</p>
+ * <p>Uses the built-in {@link HttpClient} (no third-party HTTP libraries). The request is
+ * <b>streamed</b> (Server-Sent Events): tokens are delivered to a {@link StreamListener} as they
+ * arrive. There is a short connect timeout but <b>no read timeout</b>, so slow models / web search
+ * can take as long as they need. All failure modes are reported via {@link StreamListener#onError}
+ * instead of throwing.</p>
  */
 public final class OpenWebUIClient {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /** Fail fast if we can't even establish a connection; generation itself is unbounded. */
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
+
+    /** Receives streamed output. All callbacks happen on an HTTP worker thread. */
+    public interface StreamListener {
+        /** A fragment of the assistant's answer. */
+        void onToken(String text);
+
+        /** The stream finished successfully. */
+        void onComplete();
+
+        /** The request failed; {@code message} is human-readable. */
+        void onError(String message);
+    }
 
     private final AITerminalConfig config;
     private final HttpClient httpClient;
@@ -32,25 +49,24 @@ public final class OpenWebUIClient {
     public OpenWebUIClient(AITerminalConfig config) {
         this.config = config;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(TIMEOUT)
+                .connectTimeout(CONNECT_TIMEOUT)
                 .build();
     }
 
     /**
-     * Sends the player's question to OpenWebUI and completes with the model's answer
-     * (or a readable error). Never completes exceptionally.
+     * Streams the answer to the player's question. The returned future completes when the stream
+     * ends (or fails); cancelling it best-effort aborts the request. Never completes exceptionally
+     * in a way the caller must handle — errors are delivered through {@code listener.onError}.
      */
-    public CompletableFuture<ChatResponse> ask(String question) {
-        final String baseUrl = stripTrailingSlash(config.getOpenwebuiBaseUrl());
-        final String endpoint = baseUrl + "/api/chat/completions";
+    public CompletableFuture<Void> askStreaming(String question, StreamListener listener) {
+        final String endpoint = stripTrailingSlash(config.getOpenwebuiBaseUrl()) + "/api/chat/completions";
 
         final HttpRequest request;
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(endpoint))
-                    .timeout(TIMEOUT)
                     .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
+                    .header("Accept", "text/event-stream")
                     .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(question)));
             String apiKey = config.getOpenwebuiApiKey();
             if (apiKey != null && !apiKey.isBlank()) {
@@ -58,56 +74,91 @@ public final class OpenWebUIClient {
             }
             request = builder.build();
         } catch (IllegalArgumentException e) {
-            return CompletableFuture.completedFuture(
-                    ChatResponse.error("Invalid OpenWebUI URL: " + endpoint));
+            listener.onError("Invalid OpenWebUI URL: " + endpoint);
+            return CompletableFuture.completedFuture(null);
         }
 
-        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(this::handleResponse)
-                .exceptionally(OpenWebUIClient::handleException);
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofLines())
+                .thenAccept(response -> consumeStream(response, listener))
+                .exceptionally(throwable -> {
+                    Throwable cause = unwrap(throwable);
+                    if (!(cause instanceof CancellationException)) {
+                        listener.onError(exceptionMessage(cause));
+                    }
+                    return null;
+                });
     }
 
-    private ChatResponse handleResponse(HttpResponse<String> response) {
+    private void consumeStream(HttpResponse<Stream<String>> response, StreamListener listener) {
         int status = response.statusCode();
-        String body = response.body();
-        if (status == 200) {
-            return parseContent(body);
+        if (status != 200) {
+            String body = response.body().collect(Collectors.joining("\n"));
+            listener.onError(httpErrorMessage(status, body));
+            return;
         }
-        return switch (status) {
-            case 401 -> ChatResponse.error("Unauthorized (401): check your OpenWebUI API key in aiterminal.json.");
-            case 403 -> ChatResponse.error("Forbidden (403): this API key is not allowed to use that model.");
-            case 404 -> ChatResponse.error("Not found (404): check openwebui_base_url and that the model exists.");
-            case 429 -> ChatResponse.error("Rate limited (429): too many requests, please wait and try again.");
-            default -> ChatResponse.error("OpenWebUI returned HTTP " + status + ": " + snippet(body));
-        };
+
+        boolean[] done = {false};
+        response.body().forEach(line -> {
+            if (done[0]) {
+                return;
+            }
+            String payload = parseSseData(line);
+            if (payload == null) {
+                return;
+            }
+            if (payload.equals("[DONE]")) {
+                done[0] = true;
+                return;
+            }
+            String content = extractDeltaContent(payload);
+            if (content != null && !content.isEmpty()) {
+                listener.onToken(content);
+            }
+        });
+        listener.onComplete();
     }
 
-    private ChatResponse parseContent(String body) {
+    /** Extracts {@code choices[0].delta.content} (streaming) or {@code .message.content} (fallback). */
+    private static String extractDeltaContent(String json) {
         try {
-            Map<String, Object> root = MiniJson.parseObject(body);
+            Map<String, Object> root = MiniJson.parseObject(json);
+            Object error = root.get("error");
+            if (error != null) {
+                return null;
+            }
             Object choicesObj = root.get("choices");
             if (!(choicesObj instanceof List<?> choices) || choices.isEmpty()) {
-                // Surface an OpenWebUI-style error payload if present.
-                Object error = root.get("error");
-                if (error != null) {
-                    return ChatResponse.error("OpenWebUI error: " + stringifyError(error));
-                }
-                return ChatResponse.error("OpenWebUI response contained no choices.");
+                return null;
             }
-            Object first = choices.get(0);
-            if (first instanceof Map<?, ?> choice) {
+            if (choices.get(0) instanceof Map<?, ?> choice) {
+                Object delta = choice.get("delta");
+                if (delta instanceof Map<?, ?> d && d.get("content") instanceof String s) {
+                    return s;
+                }
                 Object message = choice.get("message");
-                if (message instanceof Map<?, ?> msg) {
-                    Object content = msg.get("content");
-                    if (content instanceof String s) {
-                        return ChatResponse.ok(s);
-                    }
+                if (message instanceof Map<?, ?> m && m.get("content") instanceof String s) {
+                    return s;
                 }
             }
-            return ChatResponse.error("Could not find choices[0].message.content in the response.");
+            return null;
         } catch (RuntimeException e) {
-            return ChatResponse.error("Malformed JSON from OpenWebUI: " + e.getMessage());
+            return null;
         }
+    }
+
+    /** Returns the payload of a {@code data:} SSE line, or {@code null} for comments/blank lines. */
+    private static String parseSseData(String line) {
+        if (line == null || line.isEmpty() || line.startsWith(":")) {
+            return null;
+        }
+        if (line.startsWith("data:")) {
+            String rest = line.substring(5);
+            if (rest.startsWith(" ")) {
+                rest = rest.substring(1);
+            }
+            return rest;
+        }
+        return null;
     }
 
     private String buildRequestBody(String question) {
@@ -119,25 +170,36 @@ public final class OpenWebUIClient {
         sb.append("{\"role\":\"user\",\"content\":").append(MiniJson.quote(nullToEmpty(question))).append('}');
         sb.append("],");
         sb.append("\"features\":{\"web_search\":").append(config.isWebSearchEnabled()).append("},");
-        sb.append("\"stream\":false");
+        sb.append("\"stream\":true");
         sb.append('}');
         return sb.toString();
     }
 
-    private static ChatResponse handleException(Throwable t) {
-        Throwable cause = unwrap(t);
-        if (cause instanceof HttpTimeoutException) {
-            return ChatResponse.error("Request timed out after 30 seconds. Is the model loaded and responsive?");
+    private static String httpErrorMessage(int status, String body) {
+        return switch (status) {
+            case 401 -> "Unauthorized (401): check your OpenWebUI API key in aiterminal.json.";
+            case 403 -> "Forbidden (403): this API key is not allowed to use that model.";
+            case 404 -> "Not found (404): check openwebui_base_url and that the model exists.";
+            case 422 -> "Unprocessable (422): the request was rejected. Check openwebui_model is exact"
+                    + " and try web_search_enabled=false. " + snippet(body);
+            case 429 -> "Rate limited (429): too many requests, please wait and try again.";
+            default -> "OpenWebUI returned HTTP " + status + ": " + snippet(body);
+        };
+    }
+
+    private static String exceptionMessage(Throwable cause) {
+        if (cause instanceof HttpConnectTimeoutException) {
+            return "Could not connect to OpenWebUI (connection timed out)."
+                    + " Is it running and is openwebui_base_url correct?";
         }
         if (cause instanceof ConnectException) {
             String detail = cause.getMessage();
-            return ChatResponse.error("Could not connect to OpenWebUI"
+            return "Could not connect to OpenWebUI"
                     + (detail != null ? " (" + detail + ")" : "")
-                    + ". Is it running and is openwebui_base_url correct?");
+                    + ". Is it running and is openwebui_base_url correct?";
         }
         String msg = cause.getMessage();
-        return ChatResponse.error("Request failed: "
-                + (msg != null ? msg : cause.getClass().getSimpleName()));
+        return "Request failed: " + (msg != null ? msg : cause.getClass().getSimpleName());
     }
 
     private static Throwable unwrap(Throwable t) {
@@ -150,16 +212,9 @@ public final class OpenWebUIClient {
         return c;
     }
 
-    private static String stringifyError(Object error) {
-        if (error instanceof Map<?, ?> m && m.get("message") instanceof String s) {
-            return s;
-        }
-        return String.valueOf(error);
-    }
-
     private static String snippet(String body) {
         if (body == null) {
-            return "(empty body)";
+            return "";
         }
         String trimmed = body.strip();
         return trimmed.length() > 300 ? trimmed.substring(0, 300) + "..." : trimmed;
