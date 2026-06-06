@@ -104,10 +104,10 @@ read timeout**, so generation can take as long as it needs.
    - **Forge:** install Forge **52.x** for 1.21.1.
    - **NeoForge:** install NeoForge **21.1.x**.
 2. Copy the jar for your loader into the game's `mods/` folder (prebuilt jars are in
-   [`release/0.2/`](release/0.2)):
-   - `aiterminal-fabric-1.0.1.jar`
-   - `aiterminal-forge-1.0.1.jar`
-   - `aiterminal-neoforge-1.0.1.jar`
+   [`release/0.3/`](release/0.3)):
+   - `aiterminal-fabric-1.0.2.jar`
+   - `aiterminal-forge-1.0.2.jar`
+   - `aiterminal-neoforge-1.0.2.jar`
 3. Launch the game once to generate `config/aiterminal.json`, then configure it (below) and
    restart.
 
@@ -140,11 +140,11 @@ Output jars:
 
 | Platform | Path |
 |----------|------|
-| Fabric   | `fabric/build/libs/aiterminal-fabric-1.0.1.jar`     |
-| Forge    | `forge/build/libs/aiterminal-forge-1.0.1.jar`       |
-| NeoForge | `neoforge/build/libs/aiterminal-neoforge-1.0.1.jar` |
+| Fabric   | `fabric/build/libs/aiterminal-fabric-1.0.2.jar`     |
+| Forge    | `forge/build/libs/aiterminal-forge-1.0.2.jar`       |
+| NeoForge | `neoforge/build/libs/aiterminal-neoforge-1.0.2.jar` |
 
-(Prebuilt copies are committed under [`release/0.2/`](release/0.2).)
+(Prebuilt copies are committed under [`release/0.3/`](release/0.3).)
 
 ---
 
@@ -257,7 +257,7 @@ neoforge/  NeoForged ModDevGradle (official Mojang mappings).
 A few intentional deviations from the original spec, made so the project actually builds against
 real 1.21.1 SDKs:
 
-- **Forge version:** Minecraft 1.21.1 Forge is the **52.x** line (the spec's `51.0.1` is for
+- **Forge version:** Minecraft 1.21.1 Forge is the **52.x** line (the spec's `51.0.2` is for
   plain MC 1.21). This project targets `1.21.1-52.1.0`.
 - **Forge toolchain:** uses **ForgeGradle 6** rather than ModDevGradle's legacy-Forge path,
   which could not resolve Forge's artifacts in this environment.
