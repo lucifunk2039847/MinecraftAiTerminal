@@ -104,7 +104,7 @@ read timeout**, so generation can take as long as it needs.
    - **Forge:** install Forge **52.x** for 1.21.1.
    - **NeoForge:** install NeoForge **21.1.x**.
 2. Copy the jar for your loader into the game's `mods/` folder (prebuilt jars are in
-   [`release/0.3/`](release/0.3)):
+   [`release/0.1.0.2/`](release/0.1.0.2)):
    - `aiterminal-fabric-1.0.2.jar`
    - `aiterminal-forge-1.0.2.jar`
    - `aiterminal-neoforge-1.0.2.jar`
@@ -144,7 +144,7 @@ Output jars:
 | Forge    | `forge/build/libs/aiterminal-forge-1.0.2.jar`       |
 | NeoForge | `neoforge/build/libs/aiterminal-neoforge-1.0.2.jar` |
 
-(Prebuilt copies are committed under [`release/0.3/`](release/0.3).)
+(Prebuilt copies are committed under [`release/0.1.0.2/`](release/0.1.0.2).)
 
 ---
 
