@@ -1,5 +1,7 @@
 # AI Terminal
 
+![AI Terminal in use](Screenshot.png)
+
 A Minecraft mod that adds a placeable **terminal block**. Right-click it to open a retro
 green-on-black terminal GUI, type a question, and the mod queries a configured
 [OpenWebUI](https://github.com/open-webui/open-webui) instance (with web search enabled) and
