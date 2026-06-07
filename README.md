@@ -105,6 +105,10 @@ read timeout**, so generation can take as long as it needs.
    - **Fabric:** install Fabric Loader **and** the [Fabric API](https://modrinth.com/mod/fabric-api) mod.
    - **Forge:** install Forge **52.x** for 1.21.1.
    - **NeoForge:** install NeoForge **21.1.x**.
+
+> The prebuilt jars target Minecraft **1.21.1** specifically. If you are on a different version,
+> see [Porting to Other Versions](#porting-to-other-versions) at the bottom of this document.
+
 2. Copy the jar for your loader into the game's `mods/` folder (prebuilt jars are in
    [`release/0.1.0.2/`](release/0.1.0.2)):
    - `aiterminal-fabric-1.0.2.jar`
@@ -272,5 +276,42 @@ real 1.21.1 SDKs:
   `loot_table/`).
 - **Gradle:** the wrapper is pinned to **8.14.3**, the version compatible with all three loader
   plugins used here.
+
+---
+
+## Porting to Other Versions
+
+The compiled jars target Minecraft 1.21.1. Porting to another version is relatively
+straightforward because the mod touches very little of the unstable Minecraft API surface —
+no mixins, no rendering internals, no packets. It is built around a basic block, block entity,
+and GUI screen, which are among the most stable primitives across versions.
+
+### What to change
+
+Update the version strings in **`gradle.properties`**:
+
+- `mc_version`
+- `fabric_loader_version`
+- `fabric_api_version`
+- `forge_version`
+- `neoforge_version`
+
+Also update the version range declarations in the loader metadata files:
+
+- `fabric/src/main/resources/fabric.mod.json`
+- `forge/src/main/resources/META-INF/mods.toml`
+- `neoforge/src/main/resources/META-INF/neoforge.mods.toml`
+
+Then rebuild:
+
+```bash
+./gradlew buildAll
+```
+
+The mod was built and tested against 1.21.1. Community ports to newer versions are welcome,
+but version-specific prebuilt jars beyond the initial release are not actively maintained by
+the original author.
+
+---
 
 License: MIT.
